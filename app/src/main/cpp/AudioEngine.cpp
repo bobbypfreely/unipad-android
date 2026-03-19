@@ -19,7 +19,7 @@ bool AudioEngine::start() {
     oboe::AudioStreamBuilder builder;
     builder.setDirection(oboe::Direction::Output)
            ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-           ->setSharingMode(oboe::SharingMode::Exclusive)
+           ->setSharingMode(oboe::SharingMode::Shared)
            ->setFormat(oboe::AudioFormat::I16)
            ->setChannelCount(oboe::ChannelCount::Stereo)
            ->setUsage(oboe::Usage::Game)
