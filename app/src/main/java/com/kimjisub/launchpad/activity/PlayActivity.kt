@@ -763,6 +763,44 @@ class PlayActivity : BaseActivity() {
 			OptionSwitch(vm.scbTraceLog, string.traceLog, textColor, accentColor, hasLongClick = true)
 			OptionSwitch(vm.scbRecord, string.record, textColor, accentColor)
 
+			if (vm.unipack.autoPlayExist) {
+				Spacer(modifier = Modifier.height(8.dp))
+				if (vm.autoMappingActive) {
+					Column(
+						modifier = Modifier
+							.fillMaxWidth()
+							.padding(horizontal = 24.dp),
+					) {
+						Text(
+							text = "Auto Mapping...",
+							color = textColor,
+							fontSize = 14.sp,
+						)
+						Spacer(modifier = Modifier.height(4.dp))
+						androidx.compose.material3.LinearProgressIndicator(
+							progress = { if (vm.autoMappingMax > 0) vm.autoMappingProgress.toFloat() / vm.autoMappingMax else 0f },
+							modifier = Modifier.fillMaxWidth(),
+							color = accentColor,
+							trackColor = Color.White.copy(alpha = 0.1f),
+						)
+					}
+				} else {
+					Row(
+						modifier = Modifier
+							.fillMaxWidth()
+							.clickable { vm.autoMapping() }
+							.padding(horizontal = 24.dp, vertical = 12.dp),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = "Auto Mapping",
+							color = accentColor,
+							fontSize = 14.sp,
+						)
+					}
+				}
+			}
+
 			Spacer(modifier = Modifier.weight(1f))
 
 			// Quit button

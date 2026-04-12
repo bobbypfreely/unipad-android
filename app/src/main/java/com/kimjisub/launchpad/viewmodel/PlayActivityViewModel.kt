@@ -15,6 +15,7 @@ import com.kimjisub.launchpad.manager.ChannelManager
 import com.kimjisub.launchpad.manager.ChannelManager.Channel
 import com.kimjisub.launchpad.tool.Log
 import com.kimjisub.launchpad.tool.Log.log
+import com.kimjisub.launchpad.tool.UniPackAutoMapper
 import com.kimjisub.launchpad.unipack.UniPack
 import com.kimjisub.launchpad.unipack.UniPackFolder
 import com.kimjisub.launchpad.unipack.runner.AutoPlayRunner
@@ -151,6 +152,11 @@ class PlayActivityViewModel(
 	var soundLoadingActive by mutableStateOf(false)
 	var soundLoadingProgress by mutableIntStateOf(0)
 	var soundLoadingMax by mutableIntStateOf(0)
+
+	// Auto mapping state
+	var autoMappingActive by mutableStateOf(false)
+	var autoMappingProgress by mutableIntStateOf(0)
+	var autoMappingMax by mutableIntStateOf(0)
 
 	// Core
 	lateinit var channelManager: ChannelManager
@@ -300,81 +306,7 @@ class PlayActivityViewModel(
 					})
 		}
 
-		if (unipack.autoPlayExist) {
-			autoPlayRunner = AutoPlayRunner(
-				unipack = unipack,
-				chain = chain,
-				listener = object : AutoPlayRunner.Listener {
-					override fun onStart() {
-						viewModelScope.launch {
-							if (unipack.squareButton) autoPlayControlVisible = true
-							autoPlayProgressMax = unipack.autoPlayTable?.elements?.size ?: 0
-							autoPlayProgress = 0
-						}
-					}
-
-					override fun onPadTouchOn(x: Int, y: Int) {
-						viewModelScope.launch { padTouch(x, y, true) }
-					}
-
-					override fun onPadTouchOff(x: Int, y: Int) {
-						viewModelScope.launch { padTouch(x, y, false) }
-					}
-
-					override fun onChainChange(c: Int) {
-						viewModelScope.launch { chain.value = c }
-					}
-
-					override fun onGuidePadOn(x: Int, y: Int, targetWallTimeMs: Long) {
-						viewModelScope.launch { autoPlayGuidePad(x, y, true, targetWallTimeMs) }
-					}
-
-					override fun onGuidePadOff(x: Int, y: Int) {
-						viewModelScope.launch { autoPlayGuidePad(x, y, false) }
-					}
-
-					override fun onGuideLedUpdate(x: Int, y: Int, velocity: Int) {
-						viewModelScope.launch { uiCallback?.sendGuideLedToLaunchpad(x, y, velocity) }
-					}
-
-					override fun onGuideChainOn(c: Int) {
-						viewModelScope.launch {
-							channelManager.add(-1, CHAIN_INDEX_OFFSET + c, Channel.GUIDE, -1, LED_ORANGE)
-							uiCallback?.setLedChain(CHAIN_INDEX_OFFSET + c)
-						}
-					}
-
-					override fun onRemoveGuide() {
-						viewModelScope.launch { autoPlayRemoveGuide() }
-					}
-
-					override fun chainButsRefresh() {
-						viewModelScope.launch { chainBtnsRefresh() }
-					}
-
-					override fun onProgressUpdate(progress: Int) {
-						viewModelScope.launch { autoPlayProgress = progress }
-					}
-
-					override fun onEnd() {
-						viewModelScope.launch {
-							isAutoPlayPlaying = false
-							autoPlayRunner?.practiceGuide = false
-							autoPlayRunner?.stepMode = false
-							isPracticeMode = false
-							scbAutoPlay.setCheckedSilently(false)
-							autoPlayControlVisible = false
-							if (unipack.ledAnimationTable != null) {
-								scbLed.setChecked(true)
-								scbFeedbackLight.setChecked(false)
-							} else {
-								scbFeedbackLight.setChecked(true)
-							}
-							refreshWatermark()
-						}
-					}
-				})
-		}
+		initAutoPlayRunner()
 
 		soundRunner = SoundRunner(
 			unipack = unipack,
@@ -603,14 +535,14 @@ class PlayActivityViewModel(
 				for (i in 0 until unipack.buttonX) {
 					for (j in 0 until unipack.buttonY) {
 						if (runner.isEventExist(i, j))
-							runner.eventOff(i, j)
+							runner.eventOffAll(i, j)
 						channelManager.remove(i, j, Channel.LED)
 						uiCallback?.setLedPad(i, j)
 					}
 				}
 				for (i in 0 until FUNCTION_KEY_COUNT) {
 					if (runner.isEventExist(-1, i))
-						runner.eventOff(-1, i)
+						runner.eventOffAll(-1, i)
 					channelManager.remove(-1, i, Channel.LED)
 					uiCallback?.setLedChain(i)
 				}
@@ -805,6 +737,120 @@ class PlayActivityViewModel(
 
 	private fun addLog(msg: String) {
 		logBuilder.append('\n').append(msg)
+	}
+
+	fun initAutoPlayRunner() {
+		if (!unipack.autoPlayExist) return
+		autoPlayRunner?.stop()
+		autoPlayRunner = AutoPlayRunner(
+			unipack = unipack,
+			chain = chain,
+			listener = object : AutoPlayRunner.Listener {
+				override fun onStart() {
+					viewModelScope.launch {
+						if (unipack.squareButton) autoPlayControlVisible = true
+						autoPlayProgressMax = unipack.autoPlayTable?.elements?.size ?: 0
+						autoPlayProgress = 0
+					}
+				}
+
+				override fun onPadTouchOn(x: Int, y: Int) {
+					viewModelScope.launch { padTouch(x, y, true) }
+				}
+
+				override fun onPadTouchOff(x: Int, y: Int) {
+					viewModelScope.launch { padTouch(x, y, false) }
+				}
+
+				override fun onChainChange(c: Int) {
+					viewModelScope.launch { chain.value = c }
+				}
+
+				override fun onGuidePadOn(x: Int, y: Int, targetWallTimeMs: Long) {
+					viewModelScope.launch { autoPlayGuidePad(x, y, true, targetWallTimeMs) }
+				}
+
+				override fun onGuidePadOff(x: Int, y: Int) {
+					viewModelScope.launch { autoPlayGuidePad(x, y, false) }
+				}
+
+				override fun onGuideLedUpdate(x: Int, y: Int, velocity: Int) {
+					viewModelScope.launch { uiCallback?.sendGuideLedToLaunchpad(x, y, velocity) }
+				}
+
+				override fun onGuideChainOn(c: Int) {
+					viewModelScope.launch {
+						channelManager.add(-1, CHAIN_INDEX_OFFSET + c, Channel.GUIDE, -1, LED_ORANGE)
+						uiCallback?.setLedChain(CHAIN_INDEX_OFFSET + c)
+					}
+				}
+
+				override fun onRemoveGuide() {
+					viewModelScope.launch { autoPlayRemoveGuide() }
+				}
+
+				override fun chainButsRefresh() {
+					viewModelScope.launch { chainBtnsRefresh() }
+				}
+
+				override fun onProgressUpdate(progress: Int) {
+					viewModelScope.launch { autoPlayProgress = progress }
+				}
+
+				override fun onEnd() {
+					viewModelScope.launch {
+						isAutoPlayPlaying = false
+						autoPlayRunner?.practiceGuide = false
+						autoPlayRunner?.stepMode = false
+						isPracticeMode = false
+						scbAutoPlay.setCheckedSilently(false)
+						autoPlayControlVisible = false
+						if (unipack.ledAnimationTable != null) {
+							scbLed.setChecked(true)
+							scbFeedbackLight.setChecked(false)
+						} else {
+							scbFeedbackLight.setChecked(true)
+						}
+						refreshWatermark()
+					}
+				}
+			})
+	}
+
+	fun autoMapping() {
+		val folder = unipack as? UniPackFolder ?: return
+		if (!folder.autoPlayExist || autoMappingActive) return
+
+		autoPlayRunner?.stop()
+		scbAutoPlay.setCheckedSilently(false)
+		autoPlayControlVisible = false
+
+		UniPackAutoMapper(folder, object : UniPackAutoMapper.Listener {
+			override fun onStart() {
+				autoMappingActive = true
+				autoMappingProgress = 0
+			}
+
+			override fun onGetWorkSize(size: Int) {
+				autoMappingMax = size
+			}
+
+			override fun onProgress(progress: Int) {
+				autoMappingProgress = progress
+			}
+
+			override fun onDone() {
+				autoMappingActive = false
+				folder.reloadAutoPlay()
+				initAutoPlayRunner()
+				log("AutoMapping complete")
+			}
+
+			override fun onException(throwable: Throwable) {
+				autoMappingActive = false
+				Log.err("AutoMapping failed", throwable)
+			}
+		})
 	}
 
 	override fun onCleared() {

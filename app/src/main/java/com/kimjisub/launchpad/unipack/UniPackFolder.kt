@@ -11,13 +11,14 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
 
-class UniPackFolder(private val rootFolder: File) : UniPack() {
+class UniPackFolder(val rootFolder: File) : UniPack() {
 
 	private var infoFile: File? = null
 	private var soundsDir: File? = null
 	private var keySoundFile: File? = null
 	private var keyLedDir: File? = null
-	private var autoPlayFile: File? = null
+	var autoPlayFile: File? = null
+		private set
 	override val id: String
 		get() = rootFolder.name
 
@@ -344,6 +345,10 @@ class UniPackFolder(private val rootFolder: File) : UniPack() {
 				} else addErr("keyLed : ${file.name} is not file")
 			}
 		}
+	}
+
+	fun reloadAutoPlay() {
+		autoPlay()
 	}
 
 	private fun autoPlay() {
