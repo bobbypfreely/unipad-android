@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -107,6 +109,7 @@ import com.kimjisub.launchpad.midi.MidiConnection.removeController
 import com.kimjisub.launchpad.midi.controller.MidiController
 import com.kimjisub.launchpad.tool.Log
 import com.kimjisub.launchpad.tool.Log.log
+import com.kimjisub.launchpad.ui.theme.PlayPalette
 import com.kimjisub.launchpad.ui.theme.UniPadTheme
 import com.kimjisub.launchpad.viewmodel.PlayActivityViewModel
 import com.kimjisub.launchpad.viewmodel.PlayActivityViewModel.Companion.CHAIN_INDEX_OFFSET
@@ -416,6 +419,7 @@ class PlayActivity : BaseActivity() {
 	private fun PlayScreen() {
 		val density = LocalDensity.current
 		val paddingPx = with(density) { 8.dp.toPx().toInt() }
+		val chromeStripPx = with(density) { 56.dp.roundToPx() }
 
 		Box(
 			modifier = Modifier
@@ -503,6 +507,11 @@ class PlayActivity : BaseActivity() {
 								} },
 								modifier = Modifier.wrapContentSize()
 							)
+							if (!vm.isOptionWindowVisible) {
+								ChromeColumn()
+							} else {
+								Spacer(modifier = Modifier.size(0.dp))
+							}
 						},
 						modifier = Modifier.fillMaxSize()
 					) { measurables, constraints ->
@@ -515,8 +524,10 @@ class PlayActivity : BaseActivity() {
 						val overlayPlaceable = measurables[5].measure(
 							Constraints.fixed(padPlaceable.width, padPlaceable.height)
 						)
+						val chromePlaceable = measurables[6].measure(unconstrained)
 						layout(constraints.maxWidth, constraints.maxHeight) {
-							val padX = (constraints.maxWidth - padPlaceable.width) / 2
+							// Pads centered in the area excluding the right chrome strip
+							val padX = ((constraints.maxWidth - chromeStripPx) - padPlaceable.width) / 2
 							val padY = (constraints.maxHeight - padPlaceable.height) / 2
 							padPlaceable.place(padX, padY)
 							overlayPlaceable.place(padX, padY)
@@ -524,29 +535,12 @@ class PlayActivity : BaseActivity() {
 							rightPlaceable.place(padX + padPlaceable.width, padY + (padPlaceable.height - rightPlaceable.height) / 2)
 							topPlaceable.place(padX + (padPlaceable.width - topPlaceable.width) / 2, padY - topPlaceable.height)
 							bottomPlaceable.place(padX + (padPlaceable.width - bottomPlaceable.width) / 2, padY + padPlaceable.height)
+							// Chrome column on the right, vertically centered on pads
+							val chromeX = constraints.maxWidth - chromeStripPx + (chromeStripPx - chromePlaceable.width) / 2
+							val chromeY = padY + (padPlaceable.height - chromePlaceable.height) / 2
+							chromePlaceable.place(chromeX, chromeY.coerceAtLeast(0))
 						}
 					}
-				}
-				// Floating transport bar
-				if (vm.autoPlayControlVisible && !vm.isOptionWindowVisible) {
-					FloatingTransportBar(
-						modifier = Modifier
-							.align(Alignment.BottomCenter)
-							.padding(bottom = 16.dp),
-					)
-				}
-				// Menu button (bottom-right)
-				if (!vm.isOptionWindowVisible) {
-					Icon(
-						imageVector = Icons.Default.Menu,
-						contentDescription = stringResource(string.menu),
-						tint = Color.White.copy(alpha = 0.7f),
-						modifier = Modifier
-							.align(Alignment.BottomEnd)
-							.padding(16.dp)
-							.size(32.dp)
-							.clickable { vm.toggleOptionWindow(true) },
-					)
 				}
 				AnimatedVisibility(visible = vm.isOptionWindowVisible, enter = fadeIn(tween(200)), exit = fadeOut(tween(300))) {
 					Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)).clickable { vm.toggleOptionWindow(false) })
@@ -575,96 +569,76 @@ class PlayActivity : BaseActivity() {
 
 
 	@Composable
-	private fun AutoPlayTransportControls(accentColor: Color) {
+	private fun ChromeColumn() {
+		val accentColor = theme?.checkbox?.let { Color(it) } ?: PlayPalette.accent
 		val progressFraction = if (vm.autoPlayProgressMax > 0) vm.autoPlayProgress.toFloat() / vm.autoPlayProgressMax else 0f
+		val showTransport = vm.autoPlayControlVisible
 
 		Column(
-			modifier = Modifier.padding(top = 4.dp),
+			modifier = Modifier
+				.background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(24.dp))
+				.padding(vertical = 8.dp, horizontal = 4.dp),
+			verticalArrangement = Arrangement.spacedBy(4.dp),
 			horizontalAlignment = Alignment.CenterHorizontally,
 		) {
-			LinearProgressIndicator(
-				progress = { progressFraction },
-				modifier = Modifier
-					.width(120.dp)
-					.height(3.dp),
-				color = accentColor,
-				trackColor = Color.White.copy(alpha = 0.15f),
-				drawStopIndicator = {},
-			)
-
-			Row(
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(2.dp),
-				modifier = Modifier.padding(top = 2.dp),
-			) {
+			IconButton(onClick = { vm.toggleOptionWindow(true) }, modifier = Modifier.size(36.dp)) {
+				Icon(
+					imageVector = Icons.Default.Menu,
+					contentDescription = stringResource(string.menu),
+					tint = Color.White.copy(alpha = 0.85f),
+					modifier = Modifier.size(22.dp),
+				)
+			}
+			if (showTransport) {
+				Spacer(
+					modifier = Modifier
+						.padding(vertical = 6.dp)
+						.width(24.dp)
+						.height(2.dp)
+						.background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(1.dp)),
+				)
 				IconButton(onClick = { vm.autoPlayPrev() }, modifier = Modifier.size(32.dp)) {
-					Icon(Icons.Default.SkipPrevious, stringResource(string.cd_autoplay_prev), tint = Color.White, modifier = Modifier.size(18.dp))
+					Icon(Icons.Default.SkipPrevious, stringResource(string.cd_autoplay_prev), tint = Color.White, modifier = Modifier.size(20.dp))
 				}
 				IconButton(
 					onClick = { if (vm.autoPlayRunner?.playmode == true) vm.autoPlayPause() else vm.autoPlayResume() },
-					modifier = Modifier.size(36.dp),
+					modifier = Modifier.size(40.dp),
 				) {
 					Icon(
 						imageVector = if (vm.isAutoPlayPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
 						contentDescription = stringResource(if (vm.isAutoPlayPlaying) string.cd_autoplay_pause else string.cd_autoplay_play),
 						tint = Color.White,
-						modifier = Modifier.size(22.dp),
+						modifier = Modifier.size(26.dp),
 					)
 				}
 				IconButton(onClick = { vm.autoPlayNext() }, modifier = Modifier.size(32.dp)) {
-					Icon(Icons.Default.SkipNext, stringResource(string.cd_autoplay_next), tint = Color.White, modifier = Modifier.size(18.dp))
+					Icon(Icons.Default.SkipNext, stringResource(string.cd_autoplay_next), tint = Color.White, modifier = Modifier.size(20.dp))
+				}
+				Box(
+					modifier = Modifier
+						.padding(top = 4.dp)
+						.width(3.dp)
+						.height(72.dp)
+						.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(2.dp)),
+				) {
+					Box(
+						modifier = Modifier
+							.fillMaxWidth()
+							.height(72.dp * progressFraction.coerceIn(0f, 1f))
+							.background(accentColor, RoundedCornerShape(2.dp)),
+					)
 				}
 			}
-		}
-	}
-
-	@Composable
-	private fun FloatingTransportBar(modifier: Modifier = Modifier) {
-		val accentColor = theme?.checkbox?.let { Color(it) } ?: colorResource(R.color.checkbox)
-		val progressFraction = if (vm.autoPlayProgressMax > 0) vm.autoPlayProgress.toFloat() / vm.autoPlayProgressMax else 0f
-
-		Row(
-			modifier = modifier
-				.background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(24.dp))
-				.padding(horizontal = 12.dp, vertical = 4.dp),
-			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(4.dp),
-		) {
-			IconButton(onClick = { vm.autoPlayPrev() }, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Default.SkipPrevious, stringResource(string.cd_autoplay_prev), tint = Color.White, modifier = Modifier.size(20.dp))
-			}
-			IconButton(
-				onClick = { if (vm.autoPlayRunner?.playmode == true) vm.autoPlayPause() else vm.autoPlayResume() },
-				modifier = Modifier.size(36.dp),
-			) {
-				Icon(
-					imageVector = if (vm.isAutoPlayPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-					contentDescription = stringResource(if (vm.isAutoPlayPlaying) string.cd_autoplay_pause else string.cd_autoplay_play),
-					tint = Color.White,
-					modifier = Modifier.size(24.dp),
-				)
-			}
-			IconButton(onClick = { vm.autoPlayNext() }, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Default.SkipNext, stringResource(string.cd_autoplay_next), tint = Color.White, modifier = Modifier.size(20.dp))
-			}
-			LinearProgressIndicator(
-				progress = { progressFraction },
-				modifier = Modifier
-					.width(100.dp)
-					.height(4.dp),
-				color = accentColor,
-				trackColor = Color.White.copy(alpha = 0.15f),
-				drawStopIndicator = {},
-			)
 		}
 	}
 
 	@Composable
 	private fun OptionPanel() {
-		val panelBg = Color(0xF0161E2B)
-		val accentColor = Color(0xFFE8A44A)
+		val panelBg = PlayPalette.panelBackground
+		val accentColor = PlayPalette.accent
 		val textColor = Color.White
-		val sectionColor = textColor.copy(alpha = 0.4f)
+		val sectionColor = textColor.copy(alpha = 0.65f)
+		var infoExpanded by remember { mutableStateOf(false) }
 
 		Column(
 			modifier = Modifier
@@ -674,7 +648,7 @@ class PlayActivity : BaseActivity() {
 				.verticalScroll(rememberScrollState())
 				.padding(vertical = 24.dp),
 		) {
-			// Title with close button
+			// Header: title + single Quit icon (single source of truth)
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
@@ -682,75 +656,77 @@ class PlayActivity : BaseActivity() {
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.SpaceBetween,
 			) {
-				Text(
-					text = stringResource(string.menu),
-					color = textColor,
-					fontSize = 22.sp,
-				)
+				Text(text = stringResource(string.menu), color = textColor, fontSize = 22.sp)
 				Icon(
 					painter = painterResource(R.drawable.ic_exit),
 					contentDescription = stringResource(string.quit),
-					tint = Color(0xFFFF6B6B),
-					modifier = Modifier
-						.size(24.dp)
-						.clickable { finish() },
+					tint = PlayPalette.danger,
+					modifier = Modifier.size(24.dp).clickable { finish() },
 				)
 			}
 
 			Spacer(modifier = Modifier.height(8.dp))
 
-			// UniPack info
+			// Collapsible Unipack info (reduces viewport usage so primary controls stay near top)
 			Column(
 				modifier = Modifier
 					.fillMaxWidth()
 					.padding(horizontal = 24.dp)
 					.background(Color.White.copy(alpha = 0.06f), shape = RoundedCornerShape(12.dp))
-					.padding(16.dp),
+					.clickable { infoExpanded = !infoExpanded }
+					.padding(horizontal = 14.dp, vertical = 10.dp),
 			) {
-				Text(
-					text = vm.unipack.title.ifEmpty { "Untitled" },
-					color = textColor,
-					fontSize = 16.sp,
-					fontWeight = FontWeight.SemiBold,
-					maxLines = 1,
-					overflow = TextOverflow.Ellipsis,
-				)
-				if (vm.unipack.producerName.isNotEmpty()) {
+				Row(verticalAlignment = Alignment.CenterVertically) {
 					Text(
-						text = vm.unipack.producerName,
-						color = sectionColor,
-						fontSize = 13.sp,
+						text = vm.unipack.title.ifEmpty { "Untitled" },
+						color = textColor,
+						fontSize = 14.sp,
+						fontWeight = FontWeight.SemiBold,
 						maxLines = 1,
 						overflow = TextOverflow.Ellipsis,
+						modifier = Modifier.weight(1f),
+					)
+					Icon(
+						imageVector = if (infoExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+						contentDescription = null,
+						tint = textColor.copy(alpha = 0.6f),
+						modifier = Modifier.size(18.dp),
 					)
 				}
-				Spacer(modifier = Modifier.height(8.dp))
-				Text(
-					text = "${vm.unipack.buttonX}×${vm.unipack.buttonY}  ·  ${vm.unipack.chain} chain",
-					color = sectionColor,
-					fontSize = 12.sp,
-				)
+				if (infoExpanded) {
+					Spacer(modifier = Modifier.height(6.dp))
+					if (vm.unipack.producerName.isNotEmpty()) {
+						Text(vm.unipack.producerName, color = sectionColor, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+					}
+					Text(
+						text = "${vm.unipack.buttonX}×${vm.unipack.buttonY}  ·  ${vm.unipack.chain} chain",
+						color = sectionColor,
+						fontSize = 12.sp,
+					)
+				}
 			}
 
 			Spacer(modifier = Modifier.height(16.dp))
 
-			// Performance section
+			// PLAY MODE — top of Performance (most frequently changed during a session)
+			if (vm.scbAutoPlay.visible && !vm.scbAutoPlay.locked) {
+				SectionTitle("Play Mode", sectionColor)
+				PlayModeSegmented(textColor)
+				// AutoMapping sits next to Play Mode: it is an AutoPlay-context tool (moved out of Tools section)
+				if (vm.unipack.autoPlayExist) {
+					AutoMappingRow(accentColor, textColor)
+				}
+				Spacer(modifier = Modifier.height(16.dp))
+			}
+
 			SectionTitle("Performance", sectionColor)
 			OptionSwitch(vm.scbFeedbackLight, string.feedbackLight, textColor, accentColor)
 			OptionSwitch(vm.scbLed, string.led, textColor, accentColor)
-			if (vm.scbAutoPlay.visible && !vm.scbAutoPlay.locked) {
-				OptionModeButton(string.autoPlay, PlayMode.AutoPlay, textColor, accentColor)
-				OptionModeButton(string.guidePlay, PlayMode.GuidePlay, textColor, Color(0xFF4FC3F7))
-				OptionModeButton(string.stepPractice, PlayMode.StepPractice, textColor, Color(0xFF66BB6A))
-			}
-			if (vm.autoPlayControlVisible) {
-				Spacer(modifier = Modifier.height(8.dp))
-				AutoPlayTransportControls(accentColor)
-			}
+			// NOTE: AutoPlay transport controls intentionally removed here — the chrome column
+			// is now the single surface for Prev/Play/Next and progress while playing.
 
 			Spacer(modifier = Modifier.height(16.dp))
 
-			// Display section
 			SectionTitle("Display", sectionColor)
 			OptionSwitch(vm.scbHideUI, string.hideUI, textColor, accentColor)
 			OptionSwitch(vm.scbWatermark, string.watermark, textColor, accentColor)
@@ -758,71 +734,80 @@ class PlayActivity : BaseActivity() {
 
 			Spacer(modifier = Modifier.height(16.dp))
 
-			// Tools section
 			SectionTitle("Tools", sectionColor)
 			OptionSwitch(vm.scbTraceLog, string.traceLog, textColor, accentColor, hasLongClick = true)
 			OptionSwitch(vm.scbRecord, string.record, textColor, accentColor)
 
-			if (vm.unipack.autoPlayExist) {
-				Spacer(modifier = Modifier.height(8.dp))
-				if (vm.autoMappingActive) {
-					Column(
-						modifier = Modifier
-							.fillMaxWidth()
-							.padding(horizontal = 24.dp),
-					) {
-						Text(
-							text = "Auto Mapping...",
-							color = textColor,
-							fontSize = 14.sp,
-						)
-						Spacer(modifier = Modifier.height(4.dp))
-						androidx.compose.material3.LinearProgressIndicator(
-							progress = { if (vm.autoMappingMax > 0) vm.autoMappingProgress.toFloat() / vm.autoMappingMax else 0f },
-							modifier = Modifier.fillMaxWidth(),
-							color = accentColor,
-							trackColor = Color.White.copy(alpha = 0.1f),
-						)
-					}
-				} else {
-					Row(
-						modifier = Modifier
-							.fillMaxWidth()
-							.clickable { vm.autoMapping() }
-							.padding(horizontal = 24.dp, vertical = 12.dp),
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text(
-							text = "Auto Mapping",
-							color = accentColor,
-							fontSize = 14.sp,
-						)
-					}
+			Spacer(modifier = Modifier.weight(1f))
+			// Footer Quit removed — header icon is the single Quit entry point.
+		}
+	}
+
+	@Composable
+	private fun PlayModeSegmented(textColor: Color) {
+		val modes = listOf(
+			Triple(PlayMode.AutoPlay, string.autoPlay, PlayPalette.modeAutoPlay),
+			Triple(PlayMode.GuidePlay, string.guidePlay, PlayPalette.modeGuidePlay),
+			Triple(PlayMode.StepPractice, string.stepPractice, PlayPalette.modeStepPractice),
+		)
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 24.dp)
+				.background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+				.padding(3.dp),
+			horizontalArrangement = Arrangement.spacedBy(2.dp),
+		) {
+			modes.forEach { (mode, labelRes, color) ->
+				val active = vm.playMode == mode
+				Box(
+					modifier = Modifier
+						.weight(1f)
+						.background(if (active) color else Color.Transparent, RoundedCornerShape(8.dp))
+						.clickable {
+							vm.switchPlayMode(mode)
+							vm.toggleOptionWindow(false)
+						}
+						.padding(vertical = 10.dp),
+					contentAlignment = Alignment.Center,
+				) {
+					Text(
+						text = stringResource(labelRes),
+						color = if (active) Color.Black else textColor,
+						fontSize = 12.sp,
+						fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
 				}
 			}
+		}
+	}
 
-			Spacer(modifier = Modifier.weight(1f))
-
-			// Quit button
+	@Composable
+	private fun AutoMappingRow(accentColor: Color, textColor: Color) {
+		Spacer(modifier = Modifier.height(6.dp))
+		if (vm.autoMappingActive) {
+			Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+				Text("Auto Mapping…", color = textColor, fontSize = 13.sp)
+				Spacer(modifier = Modifier.height(4.dp))
+				androidx.compose.material3.LinearProgressIndicator(
+					progress = { if (vm.autoMappingMax > 0) vm.autoMappingProgress.toFloat() / vm.autoMappingMax else 0f },
+					modifier = Modifier.fillMaxWidth(),
+					color = accentColor,
+					trackColor = Color.White.copy(alpha = 0.1f),
+				)
+			}
+		} else {
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
-					.clickable { finish() }
-					.padding(horizontal = 24.dp, vertical = 16.dp),
+					.clickable { vm.autoMapping() }
+					.padding(horizontal = 24.dp, vertical = 10.dp),
 				verticalAlignment = Alignment.CenterVertically,
 			) {
-				Icon(
-					painter = painterResource(R.drawable.ic_exit),
-					contentDescription = stringResource(string.quit),
-					tint = Color(0xFFFF6B6B),
-					modifier = Modifier.size(20.dp),
-				)
-				Spacer(modifier = Modifier.width(12.dp))
-				Text(
-					text = stringResource(string.quit),
-					color = Color(0xFFFF6B6B),
-					fontSize = 15.sp,
-				)
+				Text("Auto Mapping", color = accentColor, fontSize = 13.sp, modifier = Modifier.weight(1f))
+				Text("→", color = accentColor.copy(alpha = 0.7f), fontSize = 13.sp)
 			}
 		}
 	}
@@ -878,35 +863,6 @@ class PlayActivity : BaseActivity() {
 		}
 	}
 
-	@Composable
-	private fun OptionModeButton(textResId: Int, mode: PlayMode, textColor: Color, accentColor: Color) {
-		val isActive = vm.playMode == mode
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.clickable {
-					vm.switchPlayMode(mode)
-					vm.toggleOptionWindow(false)
-				}
-				.padding(horizontal = 24.dp, vertical = 10.dp),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Text(
-				text = stringResource(textResId),
-				color = if (isActive) accentColor else textColor,
-				fontSize = 14.sp,
-				fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-				modifier = Modifier.weight(1f),
-			)
-			Icon(
-				imageVector = if (isActive) Icons.Default.Pause else Icons.Default.PlayArrow,
-				contentDescription = stringResource(textResId),
-				tint = if (isActive) accentColor else textColor.copy(alpha = 0.5f),
-				modifier = Modifier.size(20.dp),
-			)
-		}
-	}
-
 	private fun scaleLayoutModifier(scale: Float): Modifier = object : LayoutModifier {
 		override fun MeasureScope.measure(measurable: Measurable, constraints: Constraints): MeasureResult {
 			val placeable = measurable.measure(constraints)
@@ -937,13 +893,16 @@ class PlayActivity : BaseActivity() {
 
 			val buttonSizeX: Int
 			val buttonSizeY: Int
+			// Reserve right-side chrome strip (Menu + AutoPlay transport + vertical progress)
+			val chromeStripPx = (56 * resources.displayMetrics.density).toInt()
 			if (vm.unipack.squareButton) {
 				val chainColumns = 2
 				val chainRows = if (vm.scbProLightMode.isChecked()) 2 else 0
-				val s = (paddingWidth / (vm.unipack.buttonX + chainColumns)).coerceAtMost(paddingHeight / (vm.unipack.buttonY + chainRows))
+				val availW = (paddingWidth - chromeStripPx).coerceAtLeast(0)
+				val s = (availW / (vm.unipack.buttonX + chainColumns)).coerceAtMost(paddingHeight / (vm.unipack.buttonY + chainRows))
 				buttonSizeX = s; buttonSizeY = s
 			} else {
-				buttonSizeX = screenWidth / vm.unipack.buttonY
+				buttonSizeX = (screenWidth - chromeStripPx).coerceAtLeast(0) / vm.unipack.buttonY
 				buttonSizeY = screenHeight / vm.unipack.buttonX
 			}
 			val buttonSizeMin = buttonSizeX.coerceAtMost(buttonSizeY)
