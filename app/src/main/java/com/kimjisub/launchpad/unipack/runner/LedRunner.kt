@@ -71,10 +71,10 @@ class LedRunner(
 
 										if (x != -1) {
 											listener.onPadLedTurnOn(x, y, color, velocity)
-											btnLed[x][y] = Led(state.buttonX, state.buttonY)
+											btnLed[x][y] = Led(state.buttonX, state.buttonY, state.chainAtCreation)
 										} else {
 											listener.onChainLedTurnOn(y, color, velocity)
-											cirLed[y] = Led(state.buttonX, state.buttonY)
+											cirLed[y] = Led(state.buttonX, state.buttonY, state.chainAtCreation)
 										}
 									}
 
@@ -83,12 +83,12 @@ class LedRunner(
 										val y = event.y
 
 										if (x != -1) {
-											if (btnLed[x][y]?.equal(state.buttonX, state.buttonY) == true) {
+											if (btnLed[x][y]?.equal(state.buttonX, state.buttonY, state.chainAtCreation) == true) {
 												listener.onPadLedTurnOff(x, y)
 												btnLed[x][y] = null
 											}
 										} else {
-											if (cirLed[y]?.equal(state.buttonX, state.buttonY) == true) {
+											if (cirLed[y]?.equal(state.buttonX, state.buttonY, state.chainAtCreation) == true) {
 												listener.onChainLedTurnOff(y)
 												cirLed[y] = null
 											}
@@ -112,14 +112,14 @@ class LedRunner(
 				} else if (state.isShutdown) {
 					for (x in 0 until unipack.buttonX) {
 						for (y in 0 until unipack.buttonY) {
-							if (btnLed[x][y]?.equal(state.buttonX, state.buttonY) == true) {
+							if (btnLed[x][y]?.equal(state.buttonX, state.buttonY, state.chainAtCreation) == true) {
 								listener.onPadLedTurnOff(x, y)
 								btnLed[x][y] = null
 							}
 						}
 					}
 					for (y in cirLed.indices) {
-						if (cirLed[y]?.equal(state.buttonX, state.buttonY) == true) {
+						if (cirLed[y]?.equal(state.buttonX, state.buttonY, state.chainAtCreation) == true) {
 							listener.onChainLedTurnOff(y)
 							cirLed[y] = null
 						}
@@ -162,10 +162,10 @@ class LedRunner(
 
 	// Functions
 
-	private fun searchEvent(x: Int, y: Int): LedAnimationState? {
+	private fun searchEvent(x: Int, y: Int, chain: Int): LedAnimationState? {
 		synchronized(this) {
 			for (state in ledAnimationStates) {
-				if (state.equal(x, y)) {
+				if (state.equal(x, y, chain)) {
 					return state
 				}
 			}
@@ -173,13 +173,22 @@ class LedRunner(
 		}
 	}
 
-	fun isEventExist(x: Int, y: Int): Boolean = searchEvent(x, y) != null
+	fun isEventExist(x: Int, y: Int, chain: Int): Boolean = searchEvent(x, y, chain) != null
+
+	fun isEventExist(x: Int, y: Int): Boolean {
+		synchronized(this) {
+			return ledAnimationStates.any { it.buttonX == x && it.buttonY == y }
+		}
+	}
 
 	fun eventOn(x: Int, y: Int) {
 		if (active) {
 			synchronized(this) {
-				if (isEventExist(x, y)) {
-					searchEvent(x, y)?.isShutdown = true
+				val currentChain = chain.value
+				for (state in ledAnimationStates) {
+					if (state.equal(x, y, currentChain)) {
+						state.isShutdown = true
+					}
 				}
 				val state = LedAnimationState(x, y)
 				if (state.noError) ledAnimationStatesAdd.add(state)
@@ -190,9 +199,24 @@ class LedRunner(
 	fun eventOff(x: Int, y: Int) {
 		if (active) {
 			synchronized(this) {
-				val state = searchEvent(x, y)
-				if (state != null && state.ledAnimation?.loop == 0)
-					state.isShutdown = true
+				val currentChain = chain.value
+				for (state in ledAnimationStates) {
+					if (state.equal(x, y, currentChain) && state.ledAnimation?.loop == 0) {
+						state.isShutdown = true
+					}
+				}
+			}
+		}
+	}
+
+	fun eventOffAll(x: Int, y: Int) {
+		if (active) {
+			synchronized(this) {
+				for (state in ledAnimationStates) {
+					if (state.buttonX == x && state.buttonY == y && state.ledAnimation?.loop == 0) {
+						state.isShutdown = true
+					}
+				}
 			}
 		}
 	}
@@ -201,9 +225,10 @@ class LedRunner(
 	inner class Led(
 		val buttonX: Int,
 		val buttonY: Int,
+		val chain: Int,
 	) {
-		fun equal(buttonX: Int, buttonY: Int): Boolean {
-			return this.buttonX == buttonX && this.buttonY == buttonY
+		fun equal(buttonX: Int, buttonY: Int, chain: Int): Boolean {
+			return this.buttonX == buttonX && this.buttonY == buttonY && this.chain == chain
 		}
 	}
 
@@ -216,12 +241,14 @@ class LedRunner(
 		var remove = false
 		var loopProgress = 0
 
+		val chainAtCreation: Int = chain.value
+
 		val ledAnimation: LedAnimation?
 		val noError
 			get() = ledAnimation != null
 
-		fun equal(buttonX: Int, buttonY: Int): Boolean {
-			return this.buttonX == buttonX && this.buttonY == buttonY
+		fun equal(buttonX: Int, buttonY: Int, chain: Int): Boolean {
+			return this.buttonX == buttonX && this.buttonY == buttonY && this.chainAtCreation == chain
 		}
 
 		init {
