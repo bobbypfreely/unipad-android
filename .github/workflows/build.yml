@@ -14,6 +14,14 @@ jobs:
           cache: 'gradle'
       - name: Grant execute permission
         run: chmod +x ./gradlew
+      - name: Create dummy keystore.properties
+        run: |
+          cat <<EOF > keystore.properties
+          storeFile=dummy.jks
+          storePassword=dummy
+          keyAlias=dummy
+          keyPassword=dummy
+          EOF
       - name: Build debug APK
         run: ./gradlew assembleDebug
       - name: Upload APK
