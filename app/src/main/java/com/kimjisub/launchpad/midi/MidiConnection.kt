@@ -265,6 +265,33 @@ object MidiConnection {
 	@Volatile
 	var driver: DriverRef = Noting()
 		set(value) {
+			// A manual pick from MidiSelectActivity while more than one pad is connected
+			// must NOT replace the MultiplexDriver dispatcher (that's what was causing only
+			// one pad to light up after picking a model). Instead, route the pick to the
+			// primary session specifically and leave the dispatcher in place, so both pads
+			// keep working. There's currently no UI to target the secondary pad by itself.
+			if (value !is MultiplexDriver && sessions.size > 1 && field is MultiplexDriver) {
+				val target = primarySessionId?.let { sessions[it] }
+				if (target != null) {
+					val oldTargetDriver = target.driver
+					oldTargetDriver.sendClearLed()
+					oldTargetDriver.onDisconnected()
+
+					target.driver = value
+					setDriverListener(value, makeSendListener(target), makeReceiveListener(target))
+					try {
+						value.initialize()
+						value.onConnected()
+					} catch (e: IllegalAccessException) {
+						Log.err("Driver set failed", e)
+					} catch (e: InstantiationException) {
+						Log.err("Driver instantiation failed", e)
+					}
+				}
+				listener?.onChangeDriver(value)
+				return@set
+			}
+
 			val oldDriver = field
 			oldDriver.sendClearLed()
 			oldDriver.onDisconnected()
