@@ -64,6 +64,8 @@ class MidiSelectActivity : BaseActivity() {
         private val selectedIndex = mutableIntStateOf(0)
         private val dualPadModeEnabled = mutableStateOf(false)
         private val reflectedModeEnabled = mutableStateOf(false)
+        private val connectedSessions = mutableStateOf<List<MidiConnection.SessionSummary>>(emptyList())
+        private val selectedSessionId = mutableStateOf<Int?>(null)
 
         override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
@@ -71,14 +73,11 @@ class MidiSelectActivity : BaseActivity() {
                 isConnected.value = MidiConnection.connectedDevice != null
                 dualPadModeEnabled.value = MidiConnection.dualPadModeEnabled
                 reflectedModeEnabled.value = MidiConnection.reflectedModeEnabled
+                connectedSessions.value = MidiConnection.connectedSessions
+                selectedSessionId.value = connectedSessions.value.firstOrNull { it.isPrimary }?.sessionId
+                        ?: connectedSessions.value.firstOrNull()?.sessionId
 
-                val currentDriver = MidiConnection.driver
-                for ((i, device) in midiDevices.withIndex()) {
-                        if (device.driverClass == currentDriver::class) {
-                                selectedIndex.intValue = i
-                                break
-                        }
-                }
+                updateSelectedIndexForTarget()
 
                 setContent {
                         UniPadTheme {
@@ -87,10 +86,24 @@ class MidiSelectActivity : BaseActivity() {
                                         selectedIndex = selectedIndex.intValue,
                                         dualPadModeEnabled = dualPadModeEnabled.value,
                                         reflectedModeEnabled = reflectedModeEnabled.value,
+                                        connectedSessions = connectedSessions.value,
+                                        selectedSessionId = selectedSessionId.value,
+                                        onSessionTargetSelect = { sessionId ->
+                                                selectedSessionId.value = sessionId
+                                                updateSelectedIndexForTarget()
+                                        },
                                         onDeviceSelect = { index ->
                                                 selectedIndex.intValue = index
                                                 val driver = midiDevices[index].createDriver()
-                                                MidiConnection.driver = driver
+                                                val targetSessionId = selectedSessionId.value
+                                                if (targetSessionId != null && connectedSessions.value.size > 1) {
+                                                        // More than one pad connected - target the specific
+                                                        // device the person picked above, never disturbing
+                                                        // the other connected pad.
+                                                        MidiConnection.setDriverForSession(targetSessionId, driver)
+                                                } else {
+                                                        MidiConnection.driver = driver
+                                                }
                                         },
                                         onDualPadModeChange = { enabled ->
                                                 dualPadModeEnabled.value = enabled
@@ -102,6 +115,23 @@ class MidiSelectActivity : BaseActivity() {
                                         },
                                         onClose = { finish() },
                                 )
+                        }
+                }
+        }
+
+        // Recomputes which model is highlighted in the grid based on whichever device is
+        // currently targeted (or MidiConnection.driver directly, for the single-pad / no
+        // target case).
+        private fun updateSelectedIndexForTarget() {
+                val targetClass = selectedSessionId.value
+                        ?.let { id -> connectedSessions.value.firstOrNull { it.sessionId == id } }
+                        ?.driverClass
+                        ?: MidiConnection.driver::class
+
+                for ((i, device) in midiDevices.withIndex()) {
+                        if (device.driverClass == targetClass) {
+                                selectedIndex.intValue = i
+                                return
                         }
                 }
         }
@@ -132,6 +162,9 @@ private fun MidiSelectScreen(
         selectedIndex: Int,
         dualPadModeEnabled: Boolean,
         reflectedModeEnabled: Boolean,
+        connectedSessions: List<MidiConnection.SessionSummary>,
+        selectedSessionId: Int?,
+        onSessionTargetSelect: (Int) -> Unit,
         onDeviceSelect: (Int) -> Unit,
         onDualPadModeChange: (Boolean) -> Unit,
         onReflectedModeChange: (Boolean) -> Unit,
@@ -161,6 +194,46 @@ private fun MidiSelectScreen(
                                         MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.titleSmall,
                         )
+
+                        // With two pads connected, picking a model below needs to know
+                        // which physical device it applies to - pick that here first.
+                        if (connectedSessions.size > 1) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                        connectedSessions.forEach { session ->
+                                                val isSelected = session.sessionId == selectedSessionId
+                                                Text(
+                                                        text = if (session.isPrimary) "1: ${session.deviceName}" else "2: ${session.deviceName}",
+                                                        color = if (isSelected)
+                                                                MaterialTheme.colorScheme.primary
+                                                        else
+                                                                MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        modifier = Modifier
+                                                                .clip(RoundedCornerShape(8.dp))
+                                                                .background(
+                                                                        if (isSelected)
+                                                                                MaterialTheme.colorScheme.surface
+                                                                        else
+                                                                                Color.Transparent
+                                                                )
+                                                                .border(
+                                                                        1.dp,
+                                                                        if (isSelected)
+                                                                                MaterialTheme.colorScheme.primary
+                                                                        else
+                                                                                MaterialTheme.colorScheme.surfaceVariant,
+                                                                        RoundedCornerShape(8.dp),
+                                                                )
+                                                                .clickable { onSessionTargetSelect(session.sessionId) }
+                                                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                )
+                                        }
+                                }
+                        }
 
                         Spacer(modifier = Modifier.height(12.dp))
 
