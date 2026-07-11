@@ -36,6 +36,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 
 object MidiConnection {
@@ -107,8 +109,11 @@ object MidiConnection {
 		var name: String = "Unknown"
 	}
 
-	// Keyed by UsbDevice.deviceId (stable while the device stays attached)
-	private val sessions = mutableMapOf<Int, DeviceSession>()
+	// Keyed by UsbDevice.deviceId (stable while the device stays attached).
+	// ConcurrentHashMap because sessions are mutated on the main thread (initDevice(),
+	// disconnect cleanup) but iterated by onSendSignal/onSendRaw, which can run off-main
+	// (e.g. LED animation loops) - a plain map here caused ConcurrentModificationException.
+	private val sessions = ConcurrentHashMap<Int, DeviceSession>()
 
 	private fun startSendLoop(session: DeviceSession) {
 		if (session.sendJob?.isActive == true) return
@@ -144,6 +149,97 @@ object MidiConnection {
 	private var onReceiveSignalListener: DriverRef.OnReceiveSignalListener? = null
 	private var onSendSignalListener: DriverRef.OnSendSignalListener? = null
 
+	// deviceId of whichever session is currently "primary". Tracked explicitly (rather than
+	// relying on identity against the public `driver` property) because once a second pad
+	// connects, `driver` becomes a MultiplexDriver wrapper rather than a real per-device
+	// driver instance - see below.
+	@Volatile
+	private var primarySessionId: Int? = null
+
+	// Session-only (not persisted). Off: a second connected pad shows an exact copy of the
+	// primary's grid. On: the second pad's grid is horizontally flipped (x -> 7 - x), both
+	// for what lights up and for which logical pad a physical press maps to - so two units
+	// facing each other show/feel like a mirror image instead of a duplicate.
+	@Volatile
+	var reflectedModeEnabled: Boolean = false
+
+	// Builds a send listener scoped to a single session - it only ever delivers that
+	// session's own already-encoded output to that session's own USB/MIDI connection.
+	// Fan-out across multiple connected pads is handled one level up, by MultiplexDriver
+	// calling each session's own sendPadLed()/etc directly (with per-session coordinates) -
+	// NOT by relaying raw bytes here, since raw bytes are already encoded for one specific
+	// model and can't be corrected for a differently-encoding second device after the fact.
+	private fun makeSendListener(originSession: DeviceSession): DriverRef.OnSendSignalListener =
+		object : DriverRef.OnSendSignalListener {
+			override fun onSend(cmd: Byte, sig: Byte, note: Byte, velocity: Byte) {
+				if (originSession.usbDeviceConnection != null) {
+					originSession.sendChannel.trySend(byteArrayOf(cmd, sig, note, velocity))
+				}
+			}
+
+			override fun onSendRaw(messages: List<ByteArray>, cableNumber: Int) {
+				if (originSession.usbDeviceConnection != null) {
+					ioScope.launch { sendRawBuffer(originSession, messages, cableNumber) }
+				}
+			}
+		}
+
+	// Builds a receive listener scoped to a single session. Pad touches from the primary
+	// session pass straight through. Touches from a non-primary session get their x flipped
+	// (7 - x) when reflectedModeEnabled is on, so pressing the pad that's visually lit on the
+	// reflected device triggers the same logical pad the primary shows it at.
+	private fun makeReceiveListener(session: DeviceSession): DriverRef.OnReceiveSignalListener =
+		object : DriverRef.OnReceiveSignalListener {
+			override fun onUnknownReceived(cmd: Int, sig: Int, note: Int, velocity: Int) {
+				controller?.onUnknownEvent(cmd, sig, note, velocity)
+			}
+
+			override fun onPadTouch(x: Int, y: Int, upDown: Boolean, velocity: Int) {
+				val flip = reflectedModeEnabled && session.usbDevice.deviceId != primarySessionId
+				val mappedX = if (flip) 7 - x else x
+				controller?.onPadTouch(mappedX, y, upDown, velocity)
+			}
+
+			override fun onFunctionKeyTouch(f: Int, upDown: Boolean) {
+				controller?.onFunctionKeyTouch(f, upDown)
+			}
+
+			override fun onChainTouch(c: Int, upDown: Boolean) {
+				controller?.onChainTouch(c, upDown)
+			}
+
+			override fun onReceived(cmd: Int, sig: Int, note: Int, velocity: Int) {
+				controller?.onUnknownEvent(cmd, sig, note, velocity)
+			}
+		}
+
+	// Exposed as `driver` (see below) once a second pad connects. Fans each write out to
+	// every connected session's OWN driver instance, so each device encodes correctly for
+	// its own hardware - this is what makes mixed-model pairs (not just identical ones) work,
+	// and it's the hook point for reflection (x gets flipped per-session, before encoding).
+	private class MultiplexDriver : DriverRef() {
+		override fun sendPadLed(x: Int, y: Int, velocity: Int) {
+			for (session in MidiConnection.sessions.values) {
+				val flip = MidiConnection.reflectedModeEnabled &&
+					session.usbDevice.deviceId != MidiConnection.primarySessionId
+				val localX = if (flip) 7 - x else x
+				session.driver.sendPadLed(localX, y, velocity)
+			}
+		}
+
+		override fun sendChainLed(c: Int, velocity: Int) {
+			for (session in MidiConnection.sessions.values) session.driver.sendChainLed(c, velocity)
+		}
+
+		override fun sendFunctionKeyLed(f: Int, velocity: Int) {
+			for (session in MidiConnection.sessions.values) session.driver.sendFunctionKeyLed(f, velocity)
+		}
+
+		override fun sendClearLed() {
+			for (session in MidiConnection.sessions.values) session.driver.sendClearLed()
+		}
+	}
+
 	@Volatile
 	var connectedDevice: ConnectedDeviceSnapshot? = null
 		private set
@@ -155,6 +251,13 @@ object MidiConnection {
 	@Volatile
 	var connectionObserver: ConnectionObserver? = null
 
+	// Dual-pad support is opt-in. Off (default) preserves the original single-device
+	// behavior exactly: only ever the first device found gets opened, matching pre-refactor
+	// UniPad. On, additional devices connecting are accepted as extra mirrored sessions.
+	// Flip this from wherever the user picks their devices, BEFORE plugging them in.
+	@Volatile
+	var dualPadModeEnabled: Boolean = false
+
 	// `driver` represents the PRIMARY (first-connected) device's driver. PlayActivity /
 	// ChannelManager keep reading/writing this exactly as before (e.g. driver.sendPadLed(...)).
 	// The mirroring happens underneath: onSendSignalListener broadcasts the resulting bytes to
@@ -162,12 +265,32 @@ object MidiConnection {
 	@Volatile
 	var driver: DriverRef = Noting()
 		set(value) {
-			field.sendClearLed()
-			field.onDisconnected()
+			val oldDriver = field
+			oldDriver.sendClearLed()
+			oldDriver.onDisconnected()
+
+			// Write-through only applies to real per-device driver instances (a manual
+			// override, or the very first primary assignment) - never to the internal
+			// MultiplexDriver wrapper, which must never become a session's own `driver`
+			// reference (that would break its receive loop's decoding).
+			if (value !is MultiplexDriver) {
+				for (session in sessions.values) {
+					if (session.driver === oldDriver) {
+						session.driver = value
+					}
+				}
+			}
 
 			try {
 				field = value
-				setDriverListener(value)
+				if (value !is MultiplexDriver) {
+					val ownerSession = sessions.values.firstOrNull { it.driver === value }
+					setDriverListener(
+						value,
+						ownerSession?.let { makeSendListener(it) } ?: onSendSignalListener,
+						ownerSession?.let { makeReceiveListener(it) } ?: onReceiveSignalListener,
+					)
+				}
 				field.initialize()
 				if (sessions.isNotEmpty())
 					field.onConnected()
@@ -233,9 +356,11 @@ object MidiConnection {
 
 		onSendSignalListener = object : DriverRef.OnSendSignalListener {
 			override fun onSend(cmd: Byte, sig: Byte, note: Byte, velocity: Byte) {
-				// Broadcast to every connected Launchpad - this is what makes the LEDs mirror.
+				// Fallback only - normal wiring uses makeSendListener(session) instead,
+				// which is origin-aware and model-guarded. This just avoids a null listener
+				// in edge cases (e.g. setDriverListener() called externally with defaults).
 				for (session in sessions.values) {
-					if (session.usbDeviceConnection != null) {
+					if (session.driver::class == driver::class && session.usbDeviceConnection != null) {
 						session.sendChannel.trySend(byteArrayOf(cmd, sig, note, velocity))
 					}
 				}
@@ -243,7 +368,7 @@ object MidiConnection {
 
 			override fun onSendRaw(messages: List<ByteArray>, cableNumber: Int) {
 				for (session in sessions.values) {
-					if (session.usbDeviceConnection != null) {
+					if (session.driver::class == driver::class && session.usbDeviceConnection != null) {
 						ioScope.launch {
 							sendRawBuffer(session, messages, cableNumber)
 						}
@@ -278,7 +403,7 @@ object MidiConnection {
 		// (mirrors the original ordering, where setDriverListener() was called again at
 		// the end of initConnection to finish wiring the driver created inside initDevice()).
 		for (session in sessions.values) {
-			setDriverListener(session.driver)
+			setDriverListener(session.driver, makeSendListener(session), makeReceiveListener(session))
 		}
 	}
 
@@ -289,6 +414,11 @@ object MidiConnection {
 		}
 		if (sessions.containsKey(device.deviceId)) {
 			Log.midiDetail("Device ${device.deviceId} already connected, skipping")
+			return
+		}
+		if (!dualPadModeEnabled && sessions.isNotEmpty()) {
+			Log.midiDetail("Dual pad mode is off - ignoring additional device (${device.deviceName})")
+			listener?.onUiLog("Dual pad mode is off - ignoring ${device.deviceName}")
 			return
 		}
 
@@ -403,17 +533,27 @@ object MidiConnection {
 		}
 
 		sessions[device.deviceId] = session
-		setDriverListener(session.driver)
+		setDriverListener(session.driver, makeSendListener(session), makeReceiveListener(session))
+		session.driver.initialize()
 
-		// First device to connect becomes the "primary" driver that PlayActivity /
-		// ChannelManager talk to via the public `driver` property. Any additional
-		// device just decodes its own input into the same shared `controller` and
-		// mirrors whatever the primary driver sends out.
+		// First device to connect becomes "primary". PlayActivity/ChannelManager keep
+		// reading/writing `driver` exactly as before. With only one pad connected, `driver`
+		// is that pad's own real driver instance - zero overhead/behavior change for the
+		// vast majority of users who never use dual-pad mode. Once a second pad connects,
+		// `driver` becomes a MultiplexDriver that fans writes out to every session's own
+		// driver (each encoding correctly for its own hardware, flipping x per-session when
+		// Reflected mode is on).
 		if (sessions.size == 1) {
+			primarySessionId = device.deviceId
 			driver = session.driver
+			publishConnectedDevice(session.name)
+		} else {
+			session.driver.onConnected()
+			if (sessions.size == 2) {
+				driver = MultiplexDriver()
+			}
 		}
 
-		publishConnectedDevice(session.name)
 		listener?.onConnectedListener()
 		connectedDevice?.let { connectionObserver?.onConnected(it) }
 
@@ -693,10 +833,28 @@ object MidiConnection {
 				session.driver.onDisconnected()
 				sessions.remove(session.usbDevice.deviceId)
 
-				if (driver === session.driver) {
-					// The primary device disconnected - promote another connected
-					// session (if any) so PlayActivity/ChannelManager keep working.
-					driver = sessions.values.firstOrNull()?.driver ?: Noting()
+				val wasPrimary = session.usbDevice.deviceId == primarySessionId
+				if (wasPrimary) {
+					primarySessionId = sessions.values.firstOrNull()?.usbDevice?.deviceId
+				}
+
+				when {
+					sessions.isEmpty() -> {
+						driver = Noting()
+					}
+					sessions.size == 1 && driver is MultiplexDriver -> {
+						// Back down to one pad - drop the multiplex wrapper and talk to
+						// that pad's own driver directly again.
+						driver = sessions.values.first().driver
+					}
+					wasPrimary && driver !is MultiplexDriver -> {
+						// Single-pad mode, and the connected pad just disconnected -
+						// promote whichever other pad is left, if any.
+						driver = sessions.values.firstOrNull()?.driver ?: Noting()
+					}
+					// else: MultiplexDriver stays in place (2+ pads still connected), or a
+					// non-primary pad disconnected without affecting the primary - nothing
+					// else to update.
 				}
 
 				connectedDevice = sessions.values.firstOrNull()?.let {
@@ -719,10 +877,14 @@ object MidiConnection {
 
 	// Driver
 
-	fun setDriverListener(target: DriverRef = driver) {
+	fun setDriverListener(
+		target: DriverRef = driver,
+		sendListener: DriverRef.OnSendSignalListener? = onSendSignalListener,
+		receiveListener: DriverRef.OnReceiveSignalListener? = onReceiveSignalListener,
+	) {
 		target.setOnCycleListener(onCycleListener)
-		target.setOnGetSignalListener(onReceiveSignalListener)
-		target.setOnSendSignalListener(onSendSignalListener)
+		target.setOnGetSignalListener(receiveListener)
+		target.setOnSendSignalListener(sendListener)
 	}
 
 	// Controller
