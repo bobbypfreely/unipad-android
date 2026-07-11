@@ -264,7 +264,10 @@ object MidiConnection {
 	// The mirroring happens underneath: onSendSignalListener broadcasts the resulting bytes to
 	// every connected session, so a second (or third) Launchpad lights up in step automatically.
 	@Volatile
-	var driver: DriverRef = Noting()
+	private var _driver: DriverRef = Noting()
+
+	var driver: DriverRef
+		get() = _driver
 		set(value) {
 			// A manual pick from MidiSelectActivity while more than one pad is connected
 			// must NOT replace the MultiplexDriver dispatcher (that's what was causing only
@@ -272,12 +275,12 @@ object MidiConnection {
 			// specifically via setDriverForSession() instead, and leave the dispatcher in
 			// place. To target the secondary pad specifically, call
 			// setDriverForSession(sessionId, ...) directly with its session id.
-			if (value !is MultiplexDriver && sessions.size > 1 && field is MultiplexDriver) {
+			if (value !is MultiplexDriver && sessions.size > 1 && _driver is MultiplexDriver) {
 				primarySessionId?.let { setDriverForSession(it, value) }
-				return@set
+				return
 			}
 
-			val oldDriver = field
+			val oldDriver = _driver
 			oldDriver.sendClearLed()
 			oldDriver.onDisconnected()
 
@@ -294,7 +297,7 @@ object MidiConnection {
 			}
 
 			try {
-				field = value
+				_driver = value
 				if (value !is MultiplexDriver) {
 					val ownerSession = sessions.values.firstOrNull { it.driver === value }
 					setDriverListener(
@@ -303,9 +306,9 @@ object MidiConnection {
 						ownerSession?.let { makeReceiveListener(it) } ?: onReceiveSignalListener,
 					)
 				}
-				field.initialize()
+				_driver.initialize()
 				if (sessions.isNotEmpty())
-					field.onConnected()
+					_driver.onConnected()
 			} catch (e: IllegalAccessException) {
 				Log.err("Driver set failed", e)
 			} catch (e: InstantiationException) {
@@ -942,8 +945,8 @@ object MidiConnection {
 
 		// Keep the public `driver` property in sync when there's only one pad connected
 		// (no MultiplexDriver in play) and this is that pad.
-		if (sessionId == primarySessionId && field !is MultiplexDriver) {
-			field = value
+		if (sessionId == primarySessionId && _driver !is MultiplexDriver) {
+			_driver = value
 		}
 
 		listener?.onChangeDriver(value)
