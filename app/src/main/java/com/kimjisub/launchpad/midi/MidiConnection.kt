@@ -38,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.reflect.KClass
 
 
 object MidiConnection {
@@ -267,28 +268,12 @@ object MidiConnection {
 		set(value) {
 			// A manual pick from MidiSelectActivity while more than one pad is connected
 			// must NOT replace the MultiplexDriver dispatcher (that's what was causing only
-			// one pad to light up after picking a model). Instead, route the pick to the
-			// primary session specifically and leave the dispatcher in place, so both pads
-			// keep working. There's currently no UI to target the secondary pad by itself.
+			// one pad to light up after picking a model). Route it to the primary session
+			// specifically via setDriverForSession() instead, and leave the dispatcher in
+			// place. To target the secondary pad specifically, call
+			// setDriverForSession(sessionId, ...) directly with its session id.
 			if (value !is MultiplexDriver && sessions.size > 1 && field is MultiplexDriver) {
-				val target = primarySessionId?.let { sessions[it] }
-				if (target != null) {
-					val oldTargetDriver = target.driver
-					oldTargetDriver.sendClearLed()
-					oldTargetDriver.onDisconnected()
-
-					target.driver = value
-					setDriverListener(value, makeSendListener(target), makeReceiveListener(target))
-					try {
-						value.initialize()
-						value.onConnected()
-					} catch (e: IllegalAccessException) {
-						Log.err("Driver set failed", e)
-					} catch (e: InstantiationException) {
-						Log.err("Driver instantiation failed", e)
-					}
-				}
-				listener?.onChangeDriver(value)
+				primarySessionId?.let { setDriverForSession(it, value) }
 				return@set
 			}
 
@@ -912,6 +897,56 @@ object MidiConnection {
 		target.setOnCycleListener(onCycleListener)
 		target.setOnGetSignalListener(receiveListener)
 		target.setOnSendSignalListener(sendListener)
+	}
+
+	// Read-only snapshot of every currently connected pad, for UI that wants to let the
+	// person pick a model per physical device (rather than only ever targeting the primary).
+	data class SessionSummary(
+		val sessionId: Int,
+		val deviceName: String,
+		val driverClass: KClass<out DriverRef>,
+		val isPrimary: Boolean,
+	)
+
+	val connectedSessions: List<SessionSummary>
+		get() = sessions.values.map {
+			SessionSummary(
+				sessionId = it.usbDevice.deviceId,
+				deviceName = it.name,
+				driverClass = it.driver::class,
+				isPrimary = it.usbDevice.deviceId == primarySessionId,
+			)
+		}
+
+	// Sets the model/driver for one specific connected pad, identified by SessionSummary.sessionId.
+	// Unlike assigning `driver` directly, this always targets exactly the requested physical
+	// device and never disturbs the MultiplexDriver dispatcher other pads rely on - this is
+	// the one to use from a per-device picker UI.
+	fun setDriverForSession(sessionId: Int, value: DriverRef) {
+		val target = sessions[sessionId] ?: return
+
+		val oldTargetDriver = target.driver
+		oldTargetDriver.sendClearLed()
+		oldTargetDriver.onDisconnected()
+
+		target.driver = value
+		setDriverListener(value, makeSendListener(target), makeReceiveListener(target))
+		try {
+			value.initialize()
+			value.onConnected()
+		} catch (e: IllegalAccessException) {
+			Log.err("Driver set failed", e)
+		} catch (e: InstantiationException) {
+			Log.err("Driver instantiation failed", e)
+		}
+
+		// Keep the public `driver` property in sync when there's only one pad connected
+		// (no MultiplexDriver in play) and this is that pad.
+		if (sessionId == primarySessionId && field !is MultiplexDriver) {
+			field = value
+		}
+
+		listener?.onChangeDriver(value)
 	}
 
 	// Controller
