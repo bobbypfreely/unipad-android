@@ -64,6 +64,7 @@ class MidiSelectActivity : BaseActivity() {
         private val selectedIndex = mutableIntStateOf(0)
         private val dualPadModeEnabled = mutableStateOf(false)
         private val reflectedModeEnabled = mutableStateOf(false)
+        private val reflectedSwapSides = mutableStateOf(false)
         private val connectedSessions = mutableStateOf<List<MidiConnection.SessionSummary>>(emptyList())
         private val selectedSessionId = mutableStateOf<Int?>(null)
 
@@ -73,6 +74,7 @@ class MidiSelectActivity : BaseActivity() {
                 isConnected.value = MidiConnection.connectedDevice != null
                 dualPadModeEnabled.value = MidiConnection.dualPadModeEnabled
                 reflectedModeEnabled.value = MidiConnection.reflectedModeEnabled
+                reflectedSwapSides.value = MidiConnection.reflectedSwapSides
                 connectedSessions.value = MidiConnection.connectedSessions
                 selectedSessionId.value = connectedSessions.value.firstOrNull { it.isPrimary }?.sessionId
                         ?: connectedSessions.value.firstOrNull()?.sessionId
@@ -86,6 +88,7 @@ class MidiSelectActivity : BaseActivity() {
                                         selectedIndex = selectedIndex.intValue,
                                         dualPadModeEnabled = dualPadModeEnabled.value,
                                         reflectedModeEnabled = reflectedModeEnabled.value,
+                                        reflectedSwapSides = reflectedSwapSides.value,
                                         connectedSessions = connectedSessions.value,
                                         selectedSessionId = selectedSessionId.value,
                                         onSessionTargetSelect = { sessionId ->
@@ -112,6 +115,10 @@ class MidiSelectActivity : BaseActivity() {
                                         onReflectedModeChange = { enabled ->
                                                 reflectedModeEnabled.value = enabled
                                                 MidiConnection.reflectedModeEnabled = enabled
+                                        },
+                                        onReflectedSwapSidesChange = { swapped ->
+                                                reflectedSwapSides.value = swapped
+                                                MidiConnection.reflectedSwapSides = swapped
                                         },
                                         onClose = { finish() },
                                 )
@@ -162,12 +169,14 @@ private fun MidiSelectScreen(
         selectedIndex: Int,
         dualPadModeEnabled: Boolean,
         reflectedModeEnabled: Boolean,
+        reflectedSwapSides: Boolean,
         connectedSessions: List<MidiConnection.SessionSummary>,
         selectedSessionId: Int?,
         onSessionTargetSelect: (Int) -> Unit,
         onDeviceSelect: (Int) -> Unit,
         onDualPadModeChange: (Boolean) -> Unit,
         onReflectedModeChange: (Boolean) -> Unit,
+        onReflectedSwapSidesChange: (Boolean) -> Unit,
         onClose: () -> Unit,
 ) {
         Row(
@@ -306,6 +315,29 @@ private fun MidiSelectScreen(
                                         checked = reflectedModeEnabled,
                                         onCheckedChange = onReflectedModeChange,
                                         enabled = dualPadModeEnabled,
+                                )
+                        }
+
+                        // "Primary" (the unflipped side) is whichever pad connected first,
+                        // which may not match physical left/right - use this to correct it
+                        // if the mirror feels backwards.
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                                Text(
+                                        text = "Swap Sides",
+                                        color = if (dualPadModeEnabled && reflectedModeEnabled)
+                                                MaterialTheme.colorScheme.onBackground
+                                        else
+                                                MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Switch(
+                                        checked = reflectedSwapSides,
+                                        onCheckedChange = onReflectedSwapSidesChange,
+                                        enabled = dualPadModeEnabled && reflectedModeEnabled,
                                 )
                         }
 
