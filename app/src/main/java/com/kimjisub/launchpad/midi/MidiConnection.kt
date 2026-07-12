@@ -164,6 +164,18 @@ object MidiConnection {
 	@Volatile
 	var reflectedModeEnabled: Boolean = false
 
+	// Which pad is "primary" (the unflipped reference side) is decided by connection order
+	// (whichever connects first), which may not match how the pads are physically placed.
+	// If Reflected feels backwards, flip this instead of the connection order.
+	@Volatile
+	var reflectedSwapSides: Boolean = false
+
+	private fun isFlippedForReflection(session: DeviceSession): Boolean {
+		if (!reflectedModeEnabled) return false
+		val isPrimary = session.usbDevice.deviceId == primarySessionId
+		return if (reflectedSwapSides) isPrimary else !isPrimary
+	}
+
 	// Builds a send listener scoped to a single session - it only ever delivers that
 	// session's own already-encoded output to that session's own USB/MIDI connection.
 	// Fan-out across multiple connected pads is handled one level up, by MultiplexDriver
@@ -196,8 +208,7 @@ object MidiConnection {
 			}
 
 			override fun onPadTouch(x: Int, y: Int, upDown: Boolean, velocity: Int) {
-				val flip = reflectedModeEnabled && session.usbDevice.deviceId != primarySessionId
-				val mappedX = if (flip) 7 - x else x
+				val mappedX = if (isFlippedForReflection(session)) 7 - x else x
 				controller?.onPadTouch(mappedX, y, upDown, velocity)
 			}
 
@@ -221,9 +232,7 @@ object MidiConnection {
 	private class MultiplexDriver : DriverRef() {
 		override fun sendPadLed(x: Int, y: Int, velocity: Int) {
 			for (session in MidiConnection.sessions.values) {
-				val flip = MidiConnection.reflectedModeEnabled &&
-					session.usbDevice.deviceId != MidiConnection.primarySessionId
-				val localX = if (flip) 7 - x else x
+				val localX = if (MidiConnection.isFlippedForReflection(session)) 7 - x else x
 				session.driver.sendPadLed(localX, y, velocity)
 			}
 		}
