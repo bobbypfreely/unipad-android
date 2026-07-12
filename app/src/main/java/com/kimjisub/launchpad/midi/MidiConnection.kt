@@ -158,7 +158,7 @@ object MidiConnection {
 	private var primarySessionId: Int? = null
 
 	// Session-only (not persisted). Off: a second connected pad shows an exact copy of the
-	// primary's grid. On: the second pad's grid is horizontally flipped (x -> 7 - x), both
+	// primary's grid. On: the second pad's grid is horizontally flipped (y -> 7 - y), both
 	// for what lights up and for which logical pad a physical press maps to - so two units
 	// facing each other show/feel like a mirror image instead of a duplicate.
 	@Volatile
@@ -199,7 +199,7 @@ object MidiConnection {
 
 	// Builds a receive listener scoped to a single session. Pad touches from the primary
 	// session pass straight through. Touches from a non-primary session get their x flipped
-	// (7 - x) when reflectedModeEnabled is on, so pressing the pad that's visually lit on the
+	// (7 - y) when reflectedModeEnabled is on, so pressing the pad that's visually lit on the
 	// reflected device triggers the same logical pad the primary shows it at.
 	private fun makeReceiveListener(session: DeviceSession): DriverRef.OnReceiveSignalListener =
 		object : DriverRef.OnReceiveSignalListener {
@@ -208,8 +208,8 @@ object MidiConnection {
 			}
 
 			override fun onPadTouch(x: Int, y: Int, upDown: Boolean, velocity: Int) {
-				val mappedX = if (isFlippedForReflection(session)) 7 - x else x
-				controller?.onPadTouch(mappedX, y, upDown, velocity)
+				val mappedY = if (isFlippedForReflection(session)) 7 - y else y
+				controller?.onPadTouch(x, mappedY, upDown, velocity)
 			}
 
 			override fun onFunctionKeyTouch(f: Int, upDown: Boolean) {
@@ -232,8 +232,8 @@ object MidiConnection {
 	private class MultiplexDriver : DriverRef() {
 		override fun sendPadLed(x: Int, y: Int, velocity: Int) {
 			for (session in MidiConnection.sessions.values) {
-				val localX = if (MidiConnection.isFlippedForReflection(session)) 7 - x else x
-				session.driver.sendPadLed(localX, y, velocity)
+				val localY = if (MidiConnection.isFlippedForReflection(session)) 7 - y else y
+				session.driver.sendPadLed(x, localY, velocity)
 			}
 		}
 
