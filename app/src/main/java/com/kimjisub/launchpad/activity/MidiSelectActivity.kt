@@ -217,7 +217,7 @@ private fun MidiSelectScreen(
 					connectedSessions.forEach { session ->
 						val isSelected = session.sessionId == selectedSessionId
 						Text(
-							text = if (session.isPrimary) "1: ${'$'}{session.deviceName}" else "2: ${'$'}{session.deviceName}",
+							text = if (session.isPrimary) "1: ${session.deviceName}" else "2: ${session.deviceName}",
 							color = if (isSelected)
 								MaterialTheme.colorScheme.primary
 							else
